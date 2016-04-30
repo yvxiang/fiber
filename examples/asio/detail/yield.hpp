@@ -15,6 +15,7 @@
 #include <boost/assert.hpp>
 
 #include <boost/fiber/all.hpp>
+#include "broadcast.hpp"
 
 #include <mutex>                    // std::unique_lock
 
@@ -175,7 +176,8 @@ void asio_handler_invoke( Fn fn, yield_handler< T > * h) {
 // async_result<yield_handler<void>>
 class async_result_base {
 public:
-    explicit async_result_base( yield_handler_base & h) {
+    explicit async_result_base( yield_handler_base & h) :
+        h_( h) {
         // Inject ptr to our yield_completion instance into this
         // yield_handler<>.
         h.ycomp_ = & this->ycomp_;
@@ -189,6 +191,15 @@ public:
     }
     
     void get() {
+        // For the duration of the yield_completion::wait() call, connect our
+        // yield_handler_base to broadcast instance. io_service::stop()
+        // doesn't call pending handlers, it just stops -- leaving any waiting
+        // fibers high and dry. So when we detect that the io_service has
+        // stopped, we want to be able to notify all fibers waiting on
+        // io_service handler callbacks. Use a scoped_connection so it will
+        // implicitly disconnect when we return.
+        typedef broadcast< void ( boost::system::error_code const& ) > broadcast_t;
+        broadcast_t::scoped_connection cnct( broadcast_t::connect( h_));
         // Unless yield_handler_base::operator() has already been called,
         // suspend the calling fiber until that call.
         ycomp_.wait();
@@ -201,6 +212,12 @@ public:
     }
 
 private:
+    // Bind the yield_handler_base instance passed to us. We don't know which
+    // copy of the yield_handler_base will be passed to the asio::io_service
+    // -- but it doesn't matter. One reason why we inject dumb pointers into
+    // this yield_handler_base is so that every copy will be semantically
+    // identical: calling any copy should produce the same result.
+    yield_handler_base &            h_;
     // If yield_t does not bind an error_code instance, store into here.
     boost::system::error_code       ec_{};
     // async_result_base owns the yield_completion because, unlike

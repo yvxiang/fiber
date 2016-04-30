@@ -23,6 +23,7 @@
 #include <boost/fiber/scheduler.hpp>
 
 #include "yield.hpp"
+#include "detail/broadcast.hpp"
 
 #ifdef BOOST_HAS_ABI_HEADERS
 #  include BOOST_ABI_PREFIX

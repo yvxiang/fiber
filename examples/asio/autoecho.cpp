@@ -99,6 +99,7 @@ std::string tag() {
 /*****************************************************************************
 *   message printing
 *****************************************************************************/
+#ifndef print_hpp
 void print_( std::ostream& out) {
     out << '\n';
 }
@@ -115,6 +116,7 @@ void print( T const&... args ) {
     print_( buffer, args...);
     std::cout << buffer.str() << std::flush;
 }
+#endif // print_hpp
 
 /*****************************************************************************
 *   fiber function per server connection
@@ -213,9 +215,10 @@ void client( boost::asio::io_service & io_svc, tcp::acceptor & a,
             print( tag(), ": Reply  : ", std::string( reply, reply_length));
         }
     }
+    print( tag(), " : closing client connection");
     // done with all iterations, wait for rest of client fibers
     if ( barrier.wait()) {
-        // exactly one barrier.wait() call returns true
+        // exactly one barrier::wait() call returns true
         // we're the lucky one
         a.close();
         print( tag(), ": acceptor stopped");
