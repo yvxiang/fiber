@@ -161,11 +161,10 @@ context::resume_( detail::data_t & d) noexcept {
 }
 #else
 void
-context::resume_( detail::data_t & d) noexcept {
-    auto result = ctx_( & d);
-    detail::data_t * dp( std::get< 1 >( result) );
+context::resume_( detail::data_t & d) {
+    detail::data_t * dp( ctx_( & d) );
     if ( nullptr != dp) {
-        dp->from->ctx_ = std::move( std::get< 0 >( result) );
+        dp->from->ctx_ = std::move( ctx_);
         if ( nullptr != dp->lk) {
             dp->lk->unlock();
         } else if ( nullptr != dp->ctx) {
@@ -213,7 +212,7 @@ context::context( dispatcher_context_t, boost::context::preallocated const& pall
           }}
 #else
     ctx_{ std::allocator_arg, palloc, salloc,
-          [this,sched](boost::context::execution_context< detail::data_t * > ctx, detail::data_t * dp) noexcept {
+          [this,sched](boost::context::execution_context< detail::data_t * > ctx, detail::data_t * dp) {
             // update execution_context of calling fiber
             dp->from->ctx_ = std::move( ctx);
             if ( nullptr != dp->lk) {
@@ -241,7 +240,7 @@ context::get_id() const noexcept {
 }
 
 void
-context::resume() noexcept {
+context::resume() {
     context * prev = this;
     // context_initializer::active_ will point to `this`
     // prev will point to previous active context
@@ -329,16 +328,18 @@ context::suspend_with_cc() noexcept {
     std::swap( context_initializer::active_, prev);
     detail::data_t d{ prev };
     // context switch
-    return std::move( std::get< 0 >( ctx_( & d) ) );
+    ctx_( & d);
+    return std::move( ctx_);
 }
 #endif
 
 #if (BOOST_EXECUTION_CONTEXT==1)
 void
+context::set_terminated() noexcept {
 #else
 boost::context::execution_context< detail::data_t * >
+context::set_terminated() {
 #endif
-context::set_terminated() noexcept {
     // protect for concurrent access
     std::unique_lock< detail::spinlock > lk( splk_);
     // mark as terminated
@@ -357,12 +358,13 @@ context::set_terminated() noexcept {
         data.second.do_cleanup();
     }
     fss_data_.clear();
-    // switch to another context
-#if (BOOST_EXECUTION_CONTEXT==1)
+    // notify scheduler
     get_scheduler()->set_terminated( this);
-#else
-    return get_scheduler()->set_terminated( this);
-#endif
+    // switch to another fiber
+    get_scheduler()->suspend();
+    // never reached
+    BOOST_ASSERT_MSG( false, "should never reached");
+    return std::move( ctx_);
 }
 
 bool

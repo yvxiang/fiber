@@ -111,14 +111,12 @@ public:
     void set_remote_ready( context *) noexcept;
 #endif
 
+    void set_terminated( context *) noexcept;
+
 #if (BOOST_EXECUTION_CONTEXT==1)
     void dispatch() noexcept;
-
-    void set_terminated( context *) noexcept;
 #else
-    boost::context::execution_context< detail::data_t * > dispatch() noexcept;
-
-    boost::context::execution_context< detail::data_t * > set_terminated( context *) noexcept;
+    boost::context::execution_context< detail::data_t * > dispatch();
 #endif
 
     void yield( context *) noexcept;
@@ -129,7 +127,7 @@ public:
                      std::chrono::steady_clock::time_point const&,
                      detail::spinlock_lock &) noexcept;
 
-    void suspend() noexcept;
+    void suspend();
     void suspend( detail::spinlock_lock &) noexcept;
 
     bool has_ready_fibers() const noexcept;

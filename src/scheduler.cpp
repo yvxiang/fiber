@@ -129,7 +129,7 @@ void
 scheduler::dispatch() noexcept {
 #else
 boost::context::execution_context< detail::data_t * >
-scheduler::dispatch() noexcept {
+scheduler::dispatch() {
 #endif
     BOOST_ASSERT( context::active() == dispatcher_ctx_);
     for (;;) {
@@ -173,10 +173,11 @@ scheduler::dispatch() noexcept {
     // release termianted context'
     release_terminated_();
     // return to main-context
-#if (BOOST_EXECUTION_CONTEXT==1)
     main_ctx_->resume();
-#else
-    return main_ctx_->suspend_with_cc();
+#if ! (BOOST_EXECUTION_CONTEXT==1)
+    // never reached
+    BOOST_ASSERT_MSG( false, "should never reached");
+    return std::move( dispatcher_ctx_->ctx_);
 #endif
 }
 
@@ -219,13 +220,8 @@ scheduler::set_remote_ready( context * ctx) noexcept {
 }
 #endif
 
-#if (BOOST_EXECUTION_CONTEXT==1)
 void
 scheduler::set_terminated( context * active_ctx) noexcept {
-#else
-boost::context::execution_context< detail::data_t * >
-scheduler::set_terminated( context * active_ctx) noexcept {
-#endif
     BOOST_ASSERT( nullptr != active_ctx);
     BOOST_ASSERT( context::active() == active_ctx);
     BOOST_ASSERT( ! active_ctx->is_context( type::main_context) );
@@ -242,8 +238,6 @@ scheduler::set_terminated( context * active_ctx) noexcept {
     // resume another fiber
 #if (BOOST_EXECUTION_CONTEXT==1)
     get_next_()->resume();
-#else
-    return get_next_()->suspend_with_cc();
 #endif
 }
 
@@ -326,7 +320,7 @@ scheduler::wait_until( context * active_ctx,
 }
 
 void
-scheduler::suspend() noexcept {
+scheduler::suspend() {
     // resume another context
     get_next_()->resume();
 }

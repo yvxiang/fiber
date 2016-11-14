@@ -171,7 +171,7 @@ private:
     boost::context::execution_context< detail::data_t * >   ctx_;
 #endif
 
-    void resume_( detail::data_t &) noexcept;
+    void resume_( detail::data_t &);
     void set_ready_( context *) noexcept;
 
 #if (BOOST_EXECUTION_CONTEXT==1)
@@ -195,7 +195,7 @@ private:
 #else
     template< typename Fn, typename Tpl >
     boost::context::execution_context< detail::data_t * >
-    run_( boost::context::execution_context< detail::data_t * > && ctx, Fn && fn_, Tpl && tpl_, detail::data_t * dp) noexcept {
+    run_( boost::context::execution_context< detail::data_t * > && ctx, Fn && fn_, Tpl && tpl_, detail::data_t * dp) {
         {
             // fn and tpl must be destroyed before calling set_terminated()
             typename std::decay< Fn >::type fn = std::forward< Fn >( fn_);
@@ -338,7 +338,7 @@ public:
         ctx_{ std::allocator_arg, palloc, salloc,
               detail::wrap(
                   [this]( typename std::decay< Fn >::type & fn, typename std::decay< Tpl >::type & tpl,
-                          boost::context::execution_context< detail::data_t * > && ctx, detail::data_t * dp) mutable noexcept {
+                          boost::context::execution_context< detail::data_t * > && ctx, detail::data_t * dp) mutable {
                         return run_( std::forward< boost::context::execution_context< detail::data_t * > >( ctx), std::move( fn), std::move( tpl), dp);
                   },
                   std::forward< Fn >( fn),
@@ -347,7 +347,7 @@ public:
 # else
         ctx_{ std::allocator_arg, palloc, salloc,
               [this,fn=detail::decay_copy( std::forward< Fn >( fn) ),tpl=std::forward< Tpl >( tpl)]
-               (boost::context::execution_context< detail::data_t * > && ctx, detail::data_t * dp) mutable noexcept {
+               (boost::context::execution_context< detail::data_t * > && ctx, detail::data_t * dp) mutable {
                     return run_( std::forward< boost::context::execution_context< detail::data_t * > >( ctx), std::move( fn), std::move( tpl), dp);
               }}
 # endif
@@ -369,7 +369,7 @@ public:
 
     id get_id() const noexcept;
 
-    void resume() noexcept;
+    void resume();
     void resume( detail::spinlock_lock &) noexcept;
     void resume( context *) noexcept;
 
@@ -380,7 +380,7 @@ public:
     void set_terminated() noexcept;
 #else
     boost::context::execution_context< detail::data_t * > suspend_with_cc() noexcept;
-    boost::context::execution_context< detail::data_t * > set_terminated() noexcept;
+    boost::context::execution_context< detail::data_t * > set_terminated();
 #endif
     void join();
 
@@ -484,11 +484,11 @@ public:
             // deallocates stack (execution_context is ref counted)
             ctx->~context();
 #else
-            boost::context::execution_context< detail::data_t * > cc( std::move( ctx->ctx_) );
+            //boost::context::execution_context< detail::data_t * > cc( std::move( ctx->ctx_) );
             // destruct context
             ctx->~context();
             // deallocated stack
-            cc( nullptr);
+            //cc;
 #endif
         }
     }
