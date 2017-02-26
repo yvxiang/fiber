@@ -64,23 +64,23 @@ private:
     char                                                    pad_[cacheline_length];
 
     bool is_full_() {
-        std::size_t idx{ producer_idx_.load( std::memory_order_relaxed) };
+        std::size_t idx = producer_idx_.load( std::memory_order_relaxed);
         return 0 > static_cast< std::intptr_t >( slots_[idx & (capacity_ - 1)].cycle.load( std::memory_order_acquire) ) - static_cast< std::intptr_t >( idx);
     }
 
     bool is_empty_() {
-        std::size_t idx{ consumer_idx_.load( std::memory_order_relaxed) };
+        std::size_t idx = consumer_idx_.load( std::memory_order_relaxed);
         return 0 > static_cast< std::intptr_t >( slots_[idx & (capacity_ - 1)].cycle.load( std::memory_order_acquire) ) - static_cast< std::intptr_t >( idx + 1);
     }
 
     template< typename ValueType >
     channel_op_status try_push_( ValueType && value) {
-        slot * s{ nullptr };
-        std::size_t idx{ producer_idx_.load( std::memory_order_relaxed) };
+        slot * s = nullptr;
+        std::size_t idx = producer_idx_.load( std::memory_order_relaxed);
         for (;;) {
             s = & slots_[idx & (capacity_ - 1)];
-            std::size_t cycle{ s->cycle.load( std::memory_order_acquire) };
-            std::intptr_t diff{ static_cast< std::intptr_t >( cycle) - static_cast< std::intptr_t >( idx) };
+            std::size_t cycle = s->cycle.load( std::memory_order_acquire);
+            std::intptr_t diff = static_cast< std::intptr_t >( cycle) - static_cast< std::intptr_t >( idx);
             if ( 0 == diff) {
                 if ( producer_idx_.compare_exchange_weak( idx, idx + 1, std::memory_order_relaxed) ) {
                     break;
@@ -91,7 +91,7 @@ private:
                 idx = producer_idx_.load( std::memory_order_relaxed);
             }
         }
-        ::new ( static_cast< void * >( std::addressof( s->storage) ) ) value_type( std::forward< ValueType >( value) );
+        ::new ( static_cast< void * >( std::addressof( s->storage) ) ) value_type{ std::forward< ValueType >( value) };
         s->cycle.store( idx + 1, std::memory_order_release);
         return channel_op_status::success;
     }
@@ -101,7 +101,7 @@ private:
         for (;;) {
             s = & slots_[idx & (capacity_ - 1)];
             std::size_t cycle = s->cycle.load( std::memory_order_acquire);
-            std::intptr_t diff{ static_cast< std::intptr_t >( cycle) - static_cast< std::intptr_t >( idx + 1) };
+            std::intptr_t diff = static_cast< std::intptr_t >( cycle) - static_cast< std::intptr_t >( idx + 1);
             if ( 0 == diff) {
                 if ( consumer_idx_.compare_exchange_weak( idx, idx + 1, std::memory_order_relaxed) ) {
                     break;
@@ -118,9 +118,9 @@ private:
     }
 
     channel_op_status try_pop_( value_type & value) {
-        slot * s{ nullptr };
-        std::size_t idx{ 0 };
-        channel_op_status status{ try_value_pop_( s, idx) };
+        slot * s = nullptr;
+        std::size_t idx = 0;
+        channel_op_status status = try_value_pop_( s, idx);
         if ( channel_op_status::success == status) {
             value = std::move( * reinterpret_cast< value_type * >( std::addressof( s->storage) ) );
             s->cycle.store( idx + capacity_, std::memory_order_release);
@@ -144,8 +144,8 @@ public:
     ~buffered_channel() {
         close();
         for (;;) {
-            slot * s{ nullptr };
-            std::size_t idx{ 0 };
+            slot * s = nullptr;
+            std::size_t idx = 0;
             if ( channel_op_status::success == try_value_pop_( s, idx) ) {
                 reinterpret_cast< value_type * >( std::addressof( s->storage) )->~value_type();
                 s->cycle.store( idx + capacity_, std::memory_order_release);
@@ -164,20 +164,17 @@ public:
     }
 
     void close() noexcept {
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
         detail::spinlock_lock lk{ splk_ };
         closed_.store( true, std::memory_order_release);
         // notify all waiting producers
-        while ( ! waiting_producers_.empty() ) {
-            context * producer_ctx{ & waiting_producers_.front() };
-            waiting_producers_.pop_front();
-            ctx->set_ready( producer_ctx);
+        context * ctx;
+        while ( nullptr != ( ctx = waiting_producers_.pop() ) ) {
+            active_ctx->set_ready( ctx);
         }
         // notify all waiting consumers
-        while ( ! waiting_consumers_.empty() ) {
-            context * consumer_ctx{ & waiting_consumers_.front() };
-            waiting_consumers_.pop_front();
-            ctx->set_ready( consumer_ctx);
+        while ( nullptr != ( ctx = waiting_consumers_.pop() ) ) {
+            active_ctx->set_ready( ctx);
         }
     }
 
@@ -196,24 +193,22 @@ public:
     }
 
     channel_op_status push( value_type const& value) {
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
         for (;;) {
             if ( is_closed() ) {
                 return channel_op_status::closed;
             }
-            channel_op_status status{ try_push_( value) };
+            channel_op_status status = try_push_( value);
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx{ & waiting_consumers_.front() };
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
-                    ctx->set_ready( consumer_ctx);
+                    active_ctx->set_ready( consumer_ctx);
                 }
                 return status;
             } else if ( channel_op_status::full == status) {
-                BOOST_ASSERT( ! ctx->wait_is_linked() );
                 detail::spinlock_lock lk{ splk_ };
                 if ( is_closed() ) {
                     return channel_op_status::closed;
@@ -221,9 +216,9 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
-                ctx->suspend( lk);
+                active_ctx->suspend( lk);
             } else {
                 BOOST_ASSERT( channel_op_status::closed == status);
                 return status;
@@ -232,24 +227,22 @@ public:
     }
 
     channel_op_status push( value_type && value) {
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
         for (;;) {
             if ( is_closed() ) {
                 return channel_op_status::closed;
             }
-            channel_op_status status{ try_push_( std::move( value) ) };
+            channel_op_status status = try_push_( std::move( value) );
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx{ & waiting_consumers_.front() };
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
-                    ctx->set_ready( consumer_ctx);
+                    active_ctx->set_ready( consumer_ctx);
                 }
                 return status;
             } else if ( channel_op_status::full == status) {
-                BOOST_ASSERT( ! ctx->wait_is_linked() );
                 detail::spinlock_lock lk{ splk_ };
                 if ( is_closed() ) {
                     return channel_op_status::closed;
@@ -257,9 +250,9 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
-                ctx->suspend( lk);
+                active_ctx->suspend( lk);
             } else {
                 BOOST_ASSERT( channel_op_status::closed == status);
                 return status;
@@ -284,25 +277,23 @@ public:
     template< typename Clock, typename Duration >
     channel_op_status push_wait_until( value_type const& value,
                                        std::chrono::time_point< Clock, Duration > const& timeout_time_) {
-        std::chrono::steady_clock::time_point timeout_time( detail::convert( timeout_time_) );
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
+        std::chrono::steady_clock::time_point timeout_time = detail::convert( timeout_time_);
         for (;;) {
             if ( is_closed() ) {
                 return channel_op_status::closed;
             }
-            channel_op_status status{ try_push_( value) };
+            channel_op_status status = try_push_( value);
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx{ & waiting_consumers_.front() };
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
-                    ctx->set_ready( consumer_ctx);
+                    active_ctx->set_ready( consumer_ctx);
                 }
                 return status;
             } else if ( channel_op_status::full == status) {
-                BOOST_ASSERT( ! ctx->wait_is_linked() );
                 detail::spinlock_lock lk{ splk_ };
                 if ( is_closed() ) {
                     return channel_op_status::closed;
@@ -310,13 +301,13 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
-                if ( ! ctx->wait_until( timeout_time, lk) ) {
+                if ( ! active_ctx->wait_until( timeout_time, lk) ) {
                     // relock local lk
                     lk.lock();
                     // remove from waiting-queue
-                    ctx->wait_unlink();
+                    waiting_producers_.unlink( active_ctx);
                     return channel_op_status::timeout;
                 }
             } else {
@@ -329,25 +320,23 @@ public:
     template< typename Clock, typename Duration >
     channel_op_status push_wait_until( value_type && value,
                                        std::chrono::time_point< Clock, Duration > const& timeout_time_) {
-        std::chrono::steady_clock::time_point timeout_time( detail::convert( timeout_time_) );
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
+        std::chrono::steady_clock::time_point timeout_time = detail::convert( timeout_time_);
         for (;;) {
             if ( is_closed() ) {
                 return channel_op_status::closed;
             }
-            channel_op_status status{ try_push_( std::move( value) ) };
+            channel_op_status status = try_push_( std::move( value) );
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_ };
                 // notify one waiting consumer
-                if ( ! waiting_consumers_.empty() ) {
-                    context * consumer_ctx{ & waiting_consumers_.front() };
-                    waiting_consumers_.pop_front();
+                context * consumer_ctx = waiting_consumers_.pop();
+                if ( nullptr != consumer_ctx) {
                     lk.unlock();
-                    ctx->set_ready( consumer_ctx);
+                    active_ctx->set_ready( consumer_ctx);
                 }
                 return status;
             } else if ( channel_op_status::full == status) {
-                BOOST_ASSERT( ! ctx->wait_is_linked() );
                 detail::spinlock_lock lk{ splk_ };
                 if ( is_closed() ) {
                     return channel_op_status::closed;
@@ -355,13 +344,13 @@ public:
                 if ( ! is_full_() ) {
                     continue;
                 }
-                ctx->wait_link( waiting_producers_);
+                waiting_producers_.push( active_ctx);
                 // suspend this producer
-                if ( ! ctx->wait_until( timeout_time, lk) ) {
+                if ( ! active_ctx->wait_until( timeout_time, lk) ) {
                     // relock local lk
                     lk.lock();
                     // remove from waiting-queue
-                    ctx->wait_unlink();
+                    waiting_producers_.unlink( active_ctx);
                     return channel_op_status::timeout;
                 }
             } else {
@@ -372,7 +361,7 @@ public:
     }
 
     channel_op_status try_pop( value_type & value) {
-        channel_op_status status{ try_pop_( value) };
+        channel_op_status status = try_pop_( value);
         if ( channel_op_status::success != status) {
             if ( is_closed() ) {
                 status = channel_op_status::closed;
@@ -382,21 +371,19 @@ public:
     }
 
     channel_op_status pop( value_type & value) {
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
         for (;;) {
-            channel_op_status status{ try_pop_( value) };
+            channel_op_status status = try_pop_( value);
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_ };
                 // notify one waiting producer
-                if ( ! waiting_producers_.empty() ) {
-                    context * producer_ctx{ & waiting_producers_.front() };
-                    waiting_producers_.pop_front();
+                context * producer_ctx = waiting_producers_.pop();
+                if ( nullptr != producer_ctx) {
                     lk.unlock();
-                    ctx->set_ready( producer_ctx);
+                    active_ctx->set_ready( producer_ctx);
                 }
                 return status;
             } else if ( channel_op_status::empty == status) {
-                BOOST_ASSERT( ! ctx->wait_is_linked() );
                 detail::spinlock_lock lk{ splk_ };
                 if ( is_closed() ) {
                     return channel_op_status::closed;
@@ -404,9 +391,9 @@ public:
                 if ( ! is_empty_() ) {
                     continue;
                 }
-                ctx->wait_link( waiting_consumers_);
+                waiting_consumers_.push( active_ctx);
                 // suspend this consumer
-                ctx->suspend( lk);
+                active_ctx->suspend( lk);
             } else {
                 BOOST_ASSERT( channel_op_status::closed == status);
                 return status;
@@ -415,25 +402,23 @@ public:
     }
 
     value_type value_pop() {
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
         for (;;) {
-            slot * s{ nullptr };
-            std::size_t idx{ 0 };
-            channel_op_status status{ try_value_pop_( s, idx) };
+            slot * s = nullptr;
+            std::size_t idx = 0;
+            channel_op_status status = try_value_pop_( s, idx);
             if ( channel_op_status::success == status) {
-                value_type value{ std::move( * reinterpret_cast< value_type * >( std::addressof( s->storage) ) ) };
+                value_type value = std::move( * reinterpret_cast< value_type * >( std::addressof( s->storage) ) );
                 s->cycle.store( idx + capacity_, std::memory_order_release);
                 detail::spinlock_lock lk{ splk_ };
                 // notify one waiting producer
-                if ( ! waiting_producers_.empty() ) {
-                    context * producer_ctx{ & waiting_producers_.front() };
-                    waiting_producers_.pop_front();
+                context * producer_ctx = waiting_producers_.pop();
+                if ( nullptr != producer_ctx) {
                     lk.unlock();
-                    ctx->set_ready( producer_ctx);
+                    active_ctx->set_ready( producer_ctx);
                 }
                 return std::move( value);
             } else if ( channel_op_status::empty == status) {
-                BOOST_ASSERT( ! ctx->wait_is_linked() );
                 detail::spinlock_lock lk{ splk_ };
                 if ( is_closed() ) {
                     throw fiber_error{
@@ -443,9 +428,9 @@ public:
                 if ( ! is_empty_() ) {
                     continue;
                 }
-                ctx->wait_link( waiting_consumers_);
+                waiting_consumers_.push( active_ctx);
                 // suspend this consumer
-                ctx->suspend( lk);
+                active_ctx->suspend( lk);
             } else {
                 BOOST_ASSERT( channel_op_status::closed == status);
                 throw fiber_error{
@@ -465,22 +450,20 @@ public:
     template< typename Clock, typename Duration >
     channel_op_status pop_wait_until( value_type & value,
                                       std::chrono::time_point< Clock, Duration > const& timeout_time_) {
-        std::chrono::steady_clock::time_point timeout_time( detail::convert( timeout_time_) );
-        context * ctx{ context::active() };
+        context * active_ctx = context::active();
+        std::chrono::steady_clock::time_point timeout_time = detail::convert( timeout_time_);
         for (;;) {
-            channel_op_status status{ try_pop_( value) };
+            channel_op_status status = try_pop_( value);
             if ( channel_op_status::success == status) {
                 detail::spinlock_lock lk{ splk_ };
                 // notify one waiting producer
-                if ( ! waiting_producers_.empty() ) {
-                    context * producer_ctx{ & waiting_producers_.front() };
-                    waiting_producers_.pop_front();
+                context * producer_ctx = waiting_producers_.pop();
+                if ( nullptr != producer_ctx) {
                     lk.unlock();
-                    context::active()->set_ready( producer_ctx);
+                    active_ctx->set_ready( producer_ctx);
                 }
                 return status;
             } else if ( channel_op_status::empty == status) {
-                BOOST_ASSERT( ! ctx->wait_is_linked() );
                 detail::spinlock_lock lk{ splk_ };
                 if ( is_closed() ) {
                     return channel_op_status::closed;
@@ -488,13 +471,13 @@ public:
                 if ( ! is_empty_() ) {
                     continue;
                 }
-                ctx->wait_link( waiting_consumers_);
+                waiting_consumers_.push( active_ctx);
                 // suspend this consumer
-                if ( ! ctx->wait_until( timeout_time, lk) ) {
+                if ( ! active_ctx->wait_until( timeout_time, lk) ) {
                     // relock local lk
                     lk.lock();
                     // remove from waiting-queue
-                    ctx->wait_unlink();
+                    waiting_consumers_.unlink( active_ctx);
                     return channel_op_status::timeout;
                 }
             } else {

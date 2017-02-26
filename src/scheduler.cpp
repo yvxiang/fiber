@@ -80,8 +80,6 @@ scheduler::sleep2ready_() noexcept {
         BOOST_ASSERT( ! ctx->is_terminated() );
         BOOST_ASSERT( ! ctx->ready_is_linked() );
         BOOST_ASSERT( ctx->sleep_is_linked() );
-        // ctx->wait_is_linked() might return true if
-        // context is waiting in time_mutex::try_lock_until()
         // set fiber to state_ready if deadline was reached
         if ( ctx->tp_ <= now) {
             // remove context from sleep-queue
@@ -224,10 +222,6 @@ void
 scheduler::set_ready( context * ctx) noexcept {
     BOOST_ASSERT( nullptr != ctx);
     BOOST_ASSERT( ! ctx->is_terminated() );
-    // we do not test for wait-queue because
-    // context::wait_is_linked() is not synchronized
-    // with other threads
-    //BOOST_ASSERT( active_ctx->wait_is_linked() );
     // remove context ctx from sleep-queue
     // (might happen if blocked in timed_mutex::try_lock_until())
     if ( ctx->sleep_is_linked() ) {
@@ -270,7 +264,6 @@ scheduler::set_terminated( context * active_ctx) noexcept {
     BOOST_ASSERT( active_ctx->is_terminated() );
     BOOST_ASSERT( ! active_ctx->ready_is_linked() );
     BOOST_ASSERT( ! active_ctx->sleep_is_linked() );
-    BOOST_ASSERT( ! active_ctx->wait_is_linked() );
     // store the terminated fiber in the terminated-queue
     // the dispatcher-context will call 
     // intrusive_ptr_release( ctx);
@@ -289,7 +282,6 @@ scheduler::set_terminated( context * active_ctx) noexcept {
     BOOST_ASSERT( active_ctx->is_terminated() );
     BOOST_ASSERT( ! active_ctx->ready_is_linked() );
     BOOST_ASSERT( ! active_ctx->sleep_is_linked() );
-    BOOST_ASSERT( ! active_ctx->wait_is_linked() );
     // store the terminated fiber in the terminated-queue
     // the dispatcher-context will call 
     // intrusive_ptr_release( ctx);
@@ -306,9 +298,6 @@ scheduler::yield( context * active_ctx) noexcept {
     BOOST_ASSERT( ! active_ctx->is_terminated() );
     BOOST_ASSERT( ! active_ctx->ready_is_linked() );
     BOOST_ASSERT( ! active_ctx->sleep_is_linked() );
-    // we do not test for wait-queue because
-    // context::wait_is_linked() is not sychronized
-    // with other threads
     // defer passing active context to set_ready()
     // in work-sharing context (multiple threads read
     // from one ready-queue) the context must be
@@ -333,10 +322,6 @@ scheduler::wait_until( context * active_ctx,
     // so we do not check
     //BOOST_ASSERT( active_ctx->ready_is_linked() );
     BOOST_ASSERT( ! active_ctx->sleep_is_linked() );
-    // active_ctx->wait_is_linked() might return true
-    // if context was locked inside timed_mutex::try_lock_until()
-    // context::wait_is_linked() is not sychronized
-    // with other threads
     // push active context to sleep-queue
     active_ctx->tp_ = sleep_tp;
     active_ctx->sleep_link( sleep_queue_);
@@ -363,10 +348,7 @@ scheduler::wait_until( context * active_ctx,
     // so we do not check
     //BOOST_ASSERT( active_ctx->ready_is_linked() );
     BOOST_ASSERT( ! active_ctx->sleep_is_linked() );
-    // active_ctx->wait_is_linked() might return true
     // if context was locked inside timed_mutex::try_lock_until()
-    // context::wait_is_linked() is not sychronized
-    // with other threads
     // push active context to sleep-queue
     active_ctx->tp_ = sleep_tp;
     active_ctx->sleep_link( sleep_queue_);
@@ -446,7 +428,6 @@ scheduler::attach_worker_context( context * ctx) noexcept {
     BOOST_ASSERT( ! ctx->ready_is_linked() );
     BOOST_ASSERT( ! ctx->sleep_is_linked() );
     BOOST_ASSERT( ! ctx->terminated_is_linked() );
-    BOOST_ASSERT( ! ctx->wait_is_linked() );
     BOOST_ASSERT( ! ctx->worker_is_linked() );
 #if ! defined(BOOST_FIBERS_NO_ATOMICS)
     std::atomic_thread_fence( std::memory_order_acquire);
@@ -465,8 +446,6 @@ scheduler::detach_worker_context( context * ctx) noexcept {
     BOOST_ASSERT( ! ctx->ready_is_linked() );
     BOOST_ASSERT( ! ctx->sleep_is_linked() );
     BOOST_ASSERT( ! ctx->terminated_is_linked() );
-    BOOST_ASSERT( ! ctx->wait_is_linked() );
-    BOOST_ASSERT( ! ctx->wait_is_linked() );
     BOOST_ASSERT( ! ctx->is_context( type::pinned_context) );
     ctx->worker_unlink();
 #if ! defined(BOOST_FIBERS_NO_ATOMICS)

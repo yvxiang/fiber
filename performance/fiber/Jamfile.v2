@@ -24,7 +24,6 @@ project boost/fiber/performance/fiber
       <threading>multi
       <cxxflags>-DBOOST_DISABLE_ASSERTS
       <optimization>speed
-      <variant>release
     ;
 
 alias pbind

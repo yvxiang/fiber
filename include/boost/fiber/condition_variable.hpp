@@ -64,22 +64,17 @@ public:
 
     template< typename LockType >
     void wait( LockType & lt) {
-        context * ctx = context::active();
+        context * active_ctx = context::active();
         // atomically call lt.unlock() and block on *this
         // store this fiber in waiting-queue
         detail::spinlock_lock lk( wait_queue_splk_);
-        BOOST_ASSERT( ! ctx->wait_is_linked() );
-        ctx->wait_link( wait_queue_);
+        wait_queue_.push( active_ctx);
         // unlock external lt
         lt.unlock();
         // suspend this fiber
-        ctx->suspend( lk);
-        // relock local lk
-        lk.lock();
-        // remove from waiting-queue
-        ctx->wait_unlink();
-        // unlock local lk
-        lk.unlock();
+        active_ctx->suspend( lk);
+        // this context has been resumed
+        // and was already removed from the  waiting-queue
         // relock external again before returning
         try {
             lt.lock();
@@ -87,7 +82,6 @@ public:
             std::terminate();
         }
         // post-conditions
-        BOOST_ASSERT( ! ctx->wait_is_linked() );
     }
 
     template< typename LockType, typename Pred >
@@ -99,35 +93,32 @@ public:
 
     template< typename LockType, typename Clock, typename Duration >
     cv_status wait_until( LockType & lt, std::chrono::time_point< Clock, Duration > const& timeout_time_) {
+        context * active_ctx = context::active();
         cv_status status = cv_status::no_timeout;
-        std::chrono::steady_clock::time_point timeout_time(
-                detail::convert( timeout_time_) );
-        context * ctx = context::active();
+        std::chrono::steady_clock::time_point timeout_time = detail::convert( timeout_time_);
         // atomically call lt.unlock() and block on *this
         // store this fiber in waiting-queue
         detail::spinlock_lock lk( wait_queue_splk_);
-        BOOST_ASSERT( ! ctx->wait_is_linked() );
-        ctx->wait_link( wait_queue_);
+        wait_queue_.push( active_ctx);
         // unlock external lt
         lt.unlock();
         // suspend this fiber
-        if ( ! ctx->wait_until( timeout_time, lk) ) {
+        if ( ! active_ctx->wait_until( timeout_time, lk) ) {
+            // not resumed, timed-out instead
             status = cv_status::timeout;
+            // relock local lk
+            lk.lock();
+            // remove from waiting-queue
+            wait_queue_.unlink( active_ctx);
+            // unlock local lk
+            lk.unlock();
         }
-        // relock local lk
-        lk.lock();
-        // remove from waiting-queue
-        ctx->wait_unlink();
-        // unlock local lk
-        lk.unlock();
         // relock external again before returning
         try {
             lt.lock();
         } catch (...) {
             std::terminate();
         }
-        // post-conditions
-        BOOST_ASSERT( ! ctx->wait_is_linked() );
         return status;
     }
 
